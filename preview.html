@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Camera Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+
+        video {
+            width: 100%;
+            max-width: 600px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+        }
+
+        select, button {
+            margin: 10px 0;
+            padding: 8px;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Camera Selector Test</h2>
+
+    <select id="cameraSelect"></select>
+    <button onclick="startSelectedCamera()">Switch Camera</button>
+
+    <br><br>
+
+    <video id="video" autoplay playsinline></video>
+
+    <script>
+        let currentStream = null;
+
+        async function loadCameras() {
+            try {
+                // Request permission first
+                const tempStream = await navigator.mediaDevices.getUserMedia({
+                    video: true
+                });
+
+                tempStream.getTracks().forEach(track => track.stop());
+
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const cameras = devices.filter(
+                    device => device.kind === "videoinput"
+                );
+
+                const select = document.getElementById("cameraSelect");
+                select.innerHTML = "";
+
+                cameras.forEach((camera, index) => {
+                    const option = document.createElement("option");
+                    option.value = camera.deviceId;
+                    option.text =
+                        camera.label || `Camera ${index + 1}`;
+                    select.appendChild(option);
+                });
+
+                if (cameras.length > 0) {
+                    startCamera(cameras[0].deviceId);
+                }
+
+            } catch (err) {
+                console.error(err);
+                alert("Camera permission denied.");
+            }
+        }
+
+        async function startCamera(deviceId) {
+            try {
+                if (currentStream) {
+                    currentStream.getTracks().forEach(track => track.stop());
+                }
+
+                currentStream =
+                    await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            deviceId: {
+                                exact: deviceId
+                            }
+                        }
+                    });
+
+                document.getElementById("video").srcObject =
+                    currentStream;
+
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        function startSelectedCamera() {
+            const deviceId =
+                document.getElementById("cameraSelect").value;
+
+            startCamera(deviceId);
+        }
+
+        loadCameras();
+    </script>
+
+</body>
+</html>
