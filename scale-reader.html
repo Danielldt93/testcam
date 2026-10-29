@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FWE Scale Reader</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eef3f7;color:#172d40;font:16px system-ui,sans-serif}main{max-width:850px;margin:50px auto;padding:24px}header p,.muted{color:#52697b}h1{margin-bottom:6px}section{background:white;padding:26px;border:1px solid #dce5ec;border-radius:18px;margin-top:22px;box-shadow:0 8px 28px #1232}button{padding:12px 18px;border:0;border-radius:9px;background:#126cba;color:white;font:inherit;cursor:pointer;margin:4px 8px 4px 0}button:disabled{opacity:.45;cursor:default}button.secondary{background:#e7eef5;color:#18384f}#weight{font-size:clamp(48px,10vw,88px);font-weight:700;font-variant-numeric:tabular-nums;margin:20px 0}#status{font-weight:600}#flags{min-height:28px;color:#52697b}pre{background:#102333;color:#c9e4f7;white-space:pre-wrap;overflow-wrap:anywhere;padding:18px;border-radius:10px;max-height:250px;overflow:auto;font-size:13px}label{display:block;margin:12px 0}small{display:block;line-height:1.6}#warning{color:#a63c18} @media print{button,header,.diagnostics,.help{display:none}main{margin:0}section{box-shadow:none}}
+</style></head><body><main>
+<header><div class="muted">FWE / IND 180SS</div><h1>Bluetooth scale reader</h1><p>Connect your scale and view its live weight. No installation or COM port required.</p></header>
+<section><div id="status" role="status">Disconnected</div><p id="device" class="muted">No scale selected</p>
+<button id="connect">Find & connect scale</button><button id="disconnect" class="secondary" disabled>Disconnect</button>
+<label><input id="all" type="checkbox"> Show all BLE devices (use if the scale is missing)</label>
+<div id="weight" aria-live="polite">—</div><div id="flags">Waiting for a reading</div><p id="updated" class="muted">No data received</p>
+<button id="print" class="secondary" disabled>Print displayed reading</button><p id="warning" role="alert"></p></section>
+<section class="diagnostics"><h2>Received data</h2><small>Service FFB0 · Weight notifications FFB2 · Manufacturer format: six display bytes, one attribute byte, one status byte.</small><pre id="raw">No packets received</pre><details><summary>Connection log</summary><pre id="log"></pre></details></section>
+<section class="help"><h2>Hosting & connection</h2><small>Serve this file over HTTPS (or localhost for development) and open it directly in Chrome or Edge on Windows with Bluetooth enabled. Click Find & connect scale and select your indicator. Close any scanner app already connected to the scale. Safari and Firefox do not provide standard native Web Bluetooth support.<br><br>If the scale is absent, enable Show all BLE devices and retry. An unnamed device can still be the scale; connecting checks for service FFB0. If none appears, confirm the scale's BLE module is installed and advertising. Device discovery requires a button click and your permission.<br><br>The print button prints this page's displayed reading using the browser; it does not command a physical scale printer. All readings stay in this browser; this page sends no data to a server.</small></section>
+</main><script>
+'use strict';
+const $=id=>document.getElementById(id);
+let device=null, characteristic=null, pending=[], packets=0;
+function log(message){$('log').textContent=(new Date().toLocaleTimeString()+' '+message+'\n'+$('log').textContent).slice(0,16000);}
+function setConnected(connected){$('disconnect').disabled=!connected;$('connect').disabled=connected;$('all').disabled=connected;}
+function resetReading(){pending=[];packets=0;$('weight').textContent='—';$('flags').textContent='Waiting for a reading';$('updated').textContent='No data received';$('raw').textContent='No packets received';$('print').disabled=true;}
+function disconnected(){if(characteristic)characteristic.removeEventListener('characteristicvaluechanged',receive);characteristic=null;pending=[];setConnected(false);$('status').textContent='Disconnected';$('print').disabled=true;$('flags').textContent='Disconnected — displayed reading may be outdated';log('Disconnected');}
+function decodeFrame(bytes){
+ const attribute=bytes[6], decimals=attribute&7, unitIndex=(attribute>>3)&7;
+ const units=['','kg','lb','oz','g'];
+ if(decimals>4||unitIndex>4)throw new Error('Unknown unit or decimal attribute');
+ // The supplied example pads the display with NUL; also accept spaces.
+ const display=bytes.slice(0,6).map(b=>b===0?' ':String.fromCharCode(b)).join('').trim();
+ if(!/^[+-]?\s*\d+$/.test(display))throw new Error('Display is not a numeric weight: '+JSON.stringify(display));
+ const value=Number(display.replace(/\s/g,''))/10**decimals;
+ const names=['Zero','Stable','Tare','Hold','Low battery','LO','OK','HI'];
+ return {value,text:value.toFixed(decimals),unit:units[unitIndex],flags:names.filter((_,i)=>(bytes[7]&(1<<i))!==0)};
+}
+function receive(event){
+ const v=event.target.value, incoming=Array.from(new Uint8Array(v.buffer,v.byteOffset,v.byteLength));
+ packets++;$('raw').textContent='Packet '+packets+' ('+incoming.length+' bytes)\n'+incoming.map(b=>b.toString(16).padStart(2,'0').toUpperCase()).join(' ');
+ pending.push(...incoming);
+ while(pending.length>=8){
+  const frame=pending.splice(0,8);
+  try{const r=decodeFrame(frame);$('weight').textContent=r.text+(r.unit?' '+r.unit:'');$('flags').textContent=r.flags.join(' · ')||'No status flags';$('updated').textContent='Updated '+new Date().toLocaleTimeString();$('print').disabled=false;$('warning').textContent='';}
+  catch(error){$('weight').textContent='—';$('print').disabled=true;$('flags').textContent='Unrecognised display data';$('warning').textContent=error.message+' — inspect the raw packet below.';log(error.message);}
+ }
+ if(pending.length)log('Buffered '+pending.length+' bytes awaiting a complete 8-byte frame');
+}
+$('connect').addEventListener('click',async()=>{
+ $('warning').textContent='';resetReading();$('connect').disabled=true;
+ try{
+  if(!window.isSecureContext)throw new Error('Open this page over HTTPS or localhost.');
+  if(!navigator.bluetooth)throw new Error('Web Bluetooth is unavailable. Use Chrome or Edge on a supported PC and check browser policies.');
+  $('status').textContent='Choose your scale…';
+  const options=$('all').checked?{acceptAllDevices:true,optionalServices:[0xffb0]}:{filters:[{services:[0xffb0]}]};
+  const selected=await navigator.bluetooth.requestDevice(options);
+  if(device)device.removeEventListener('gattserverdisconnected',disconnected);
+  device=selected;device.addEventListener('gattserverdisconnected',disconnected);
+  $('device').textContent=device.name||'Unnamed BLE device';$('status').textContent='Connecting…';log('Selected '+(device.name||device.id));
+  const server=await device.gatt.connect();
+  const service=await server.getPrimaryService(0xffb0);
+  characteristic=await service.getCharacteristic(0xffb2);
+  characteristic.addEventListener('characteristicvaluechanged',receive);
+  await characteristic.startNotifications();
+  setConnected(true);$('status').textContent='Connected · listening for weight';log('Subscribed to FFB2 notifications');
+ }catch(error){
+  log(error.name+': '+error.message);
+  if(device?.gatt?.connected)device.gatt.disconnect();
+  if(characteristic)characteristic.removeEventListener('characteristicvaluechanged',receive);
+  characteristic=null;setConnected(false);$('status').textContent='Not connected';
+  $('warning').textContent=error.name==='NotFoundError'?'No device selected, or the required scale service was not found. If the chooser was empty, try Show all BLE devices.':error.message;
+ }
+});
+$('disconnect').addEventListener('click',()=>{if(device?.gatt?.connected)device.gatt.disconnect();});
+$('print').addEventListener('click',()=>window.print());
+if(!window.isSecureContext)$('warning').textContent='HTTPS or localhost is required.';
+else if(!navigator.bluetooth)$('warning').textContent='This browser does not expose Web Bluetooth. Open in Chrome or Edge on Windows.';
+</script></body></html>
