@@ -1,73 +1,453 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FWE Scale Reader</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>IND 180SS BT APP</title>
 <style>
-*{box-sizing:border-box}body{margin:0;background:#eef3f7;color:#172d40;font:16px system-ui,sans-serif}main{max-width:850px;margin:50px auto;padding:24px}header p,.muted{color:#52697b}h1{margin-bottom:6px}section{background:white;padding:26px;border:1px solid #dce5ec;border-radius:18px;margin-top:22px;box-shadow:0 8px 28px #1232}button{padding:12px 18px;border:0;border-radius:9px;background:#126cba;color:white;font:inherit;cursor:pointer;margin:4px 8px 4px 0}button:disabled{opacity:.45;cursor:default}button.secondary{background:#e7eef5;color:#18384f}#weight{font-size:clamp(48px,10vw,88px);font-weight:700;font-variant-numeric:tabular-nums;margin:20px 0}#status{font-weight:600}#flags{min-height:28px;color:#52697b}pre{background:#102333;color:#c9e4f7;white-space:pre-wrap;overflow-wrap:anywhere;padding:18px;border-radius:10px;max-height:250px;overflow:auto;font-size:13px}label{display:block;margin:12px 0}small{display:block;line-height:1.6}#warning{color:#a63c18} @media print{button,header,.diagnostics,.help{display:none}main{margin:0}section{box-shadow:none}}
-</style></head><body><main>
-<header><div class="muted">FWE / IND 180SS</div><h1>Bluetooth scale reader</h1><p>Connect your scale and view its live weight. No installation or COM port required.</p></header>
-<section><div id="status" role="status">Disconnected</div><p id="device" class="muted">No scale selected</p>
-<button id="connect">Find & connect scale</button><button id="disconnect" class="secondary" disabled>Disconnect</button>
-<label><input id="all" type="checkbox"> Show all BLE devices (use if the scale is missing)</label>
-<div id="weight" aria-live="polite">—</div><div id="flags">Waiting for a reading</div><p id="updated" class="muted">No data received</p>
-<button id="print" class="secondary" disabled>Print displayed reading</button><p id="warning" role="alert"></p></section>
-<section class="diagnostics"><h2>Received data</h2><small>Service FFB0 · Weight notifications FFB2 · Manufacturer format: six display bytes, one attribute byte, one status byte.</small><pre id="raw">No packets received</pre><details><summary>Connection log</summary><pre id="log"></pre></details></section>
-<section class="help"><h2>Hosting & connection</h2><small>Serve this file over HTTPS (or localhost for development) and open it directly in Chrome or Edge on Windows with Bluetooth enabled. Click Find & connect scale and select your indicator. Close any scanner app already connected to the scale. Safari and Firefox do not provide standard native Web Bluetooth support.<br><br>If the scale is absent, enable Show all BLE devices and retry. An unnamed device can still be the scale; connecting checks for service FFB0. If none appears, confirm the scale's BLE module is installed and advertising. Device discovery requires a button click and your permission.<br><br>The print button prints this page's displayed reading using the browser; it does not command a physical scale printer. All readings stay in this browser; this page sends no data to a server.</small></section>
-</main><script>
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:#e9eeee;color:#18323a;font:14px system-ui,"Segoe UI",sans-serif;display:flex;align-items:flex-start;justify-content:center}
+.app{width:min(1000px,100vw);margin:clamp(0px,3vw,32px) auto;background:#4f8a8b;border-radius:6px;overflow:hidden;box-shadow:0 10px 30px #0003}
+.statusbar{display:flex;align-items:center;gap:10px;background:#cfe3df;padding:6px 14px;font-size:12px;color:#22404a}
+.statusbar svg{width:14px;height:14px;vertical-align:middle}
+#battery{display:flex;align-items:center;gap:4px}
+#btIcon{opacity:.35}#btIcon.on{opacity:1;color:#1565c0}
+#clock{margin-left:auto;font-variant-numeric:tabular-nums;text-align:right;line-height:1.15}
+.screen{padding:12px 14px 16px}
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:12px}
+#deviceLabel{flex:0 1 220px;min-width:140px;background:#2f4b5c;color:#fff;border:1px solid #9fb9c0;border-radius:3px;padding:4px 8px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default}
+#deviceLabel.reconnect{cursor:pointer;background:#365d70;text-decoration:underline dotted}
+button{font:inherit;cursor:pointer}
+.btn{background:#eef3f3;color:#1d3540;border:1px solid #9fb9c0;border-radius:3px;padding:4px 9px;font-size:12px;text-transform:uppercase;min-height:26px}
+.btn:hover:not(:disabled){background:#fff}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.active{background:#d9f0d0;border-color:#5f9b54}
+.iconbtn{background:none;border:0;color:#16323b;padding:2px 4px;line-height:0}
+.iconbtn svg{width:20px;height:20px}
+.lcd{position:relative;margin:0 auto;width:min(680px,100%);background:#34506b;border-radius:8px;padding:14px 22px 18px 70px;color:#fff;min-height:200px;box-shadow:inset 0 0 0 1px #ffffff14;transition:filter .2s}
+.ann{font-size:13px;font-weight:600;letter-spacing:.5px;color:#ffffff38;transition:color .15s}
+.ann.on{color:#fff}
+.annTop{display:flex;justify-content:space-between;padding:0 6px 0 40px}
+.annTop span span{margin-right:12px}.annTop .right span{margin:0 0 0 14px}
+.annLeft{position:absolute;left:22px;top:52px;display:flex;flex-direction:column;gap:18px;font-size:14px}
+#weight{text-align:right;font-weight:300;font-size:clamp(56px,12vw,112px);line-height:1.1;font-variant-numeric:tabular-nums;margin-top:12px;white-space:nowrap;overflow:hidden}
+#weight.stale{opacity:.45}
+#updated{text-align:right;font-size:11px;color:#ffffff70;min-height:14px}
+.keys{display:flex;align-items:center;gap:6px;margin-top:16px}
+.keys .btn{min-width:52px;min-height:32px}
+#power{margin-left:auto;background:#eef3f3;border:1px solid #9fb9c0;border-radius:4px;width:44px;height:38px;display:grid;place-items:center;color:#0d1a20}
+#power:disabled{opacity:.5;cursor:default}
+#power svg{width:28px;height:28px}
+#warning{min-height:18px;margin:10px 2px 0;color:#fff2c4;font-size:13px}
+.rec-head{display:flex;align-items:center;gap:10px;color:#fff;padding:4px 0 10px;font-size:15px}
+.rec-head .iconbtn{color:#fff}
+#total{margin-left:auto}
+#recordList{list-style:none;margin:0;padding:0;background:#fff;border-radius:3px;max-height:420px;overflow:auto}
+#recordList li{display:flex;align-items:center;gap:12px;padding:7px 12px;border-bottom:1px solid #dfe7e8;font-size:16px;font-variant-numeric:tabular-nums}
+#recordList li:last-child{border-bottom:0}
+#recordList li span:last-child{margin-left:auto}
+#recordList .empty{color:#6a7f86;justify-content:center}
+.drawer{background:#f4f8f8;border-top:1px solid #9fb9c0;padding:14px;font-size:13px}
+.drawer h3{margin:4px 0 8px;font-size:14px}
+.drawer pre{background:#102333;color:#c9e4f7;white-space:pre-wrap;overflow-wrap:anywhere;padding:12px;border-radius:6px;max-height:200px;overflow:auto;font-size:12px;margin:6px 0 12px}
+.drawer label{display:block;margin:6px 0}
+.drawer small{display:block;line-height:1.55;color:#40575f}
+[hidden]{display:none!important}
+@media (max-width:620px){.lcd{padding-left:52px}.annLeft{left:12px}.annTop{padding-left:10px}.keys{flex-wrap:wrap}}
+</style></head><body>
+<div class="app">
+ <div class="statusbar">
+  <span id="battery" hidden><svg viewBox="0 0 24 12"><rect x="1" y="1" width="19" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="21" y="4" width="2" height="4" fill="currentColor"/><rect id="batteryFill" x="3" y="3" width="15" height="6" fill="currentColor"/></svg><span id="batteryPct"></span></span>
+  <svg id="btIcon" viewBox="0 0 24 24" aria-label="Bluetooth"><path d="M7 7l10 10-5 4V3l5 4L7 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+  <span id="clock"></span>
+ </div>
+
+ <div id="mainScreen" class="screen">
+  <div class="toolbar">
+   <div id="deviceLabel" title="Connected scale">No scale selected</div>
+   <button id="connect" class="btn">Connect scales</button>
+   <button id="connectPrinter" class="btn">Connect printer</button>
+   <button id="save" class="btn" disabled>Save</button>
+   <button id="recall" class="btn">Recall</button>
+   <button id="drawerToggle" class="iconbtn" title="Raw data, log and help" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
+  </div>
+  <div class="lcd" id="lcd">
+   <div class="annTop"><span><span class="ann" data-flag="LO-BAT">LO-BAT</span><span class="ann" data-flag="HOLD">HOLD</span></span><span class="right"><span class="ann" data-flag="HI">HI</span><span class="ann" data-flag="OK">OK</span><span class="ann" data-flag="LO">LO</span></span></div>
+   <div class="annLeft"><span class="ann" data-flag="ZERO" title="Zero">&gt;0&lt;</span><span class="ann" data-flag="TARE" title="Tare">&gt;T&lt;</span><span class="ann" data-flag="STABLE" title="Stable">~</span></div>
+   <div id="weight" aria-live="polite">----</div>
+   <div id="updated"></div>
+  </div>
+  <div class="keys">
+   <button class="btn key" data-key="B" disabled>Bright</button>
+   <button class="btn key" data-key="T" disabled>Tare</button>
+   <button class="btn key" data-key="O" disabled>Zero</button>
+   <button class="btn key" data-key="M" disabled>Mode</button>
+   <button class="btn key" data-key="H" disabled>Hold</button>
+   <button id="print" class="btn" disabled>Print</button>
+   <button id="power" title="Power on/off" disabled><svg viewBox="0 0 24 24"><path d="M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></button>
+  </div>
+  <div id="warning" role="alert"></div>
+ </div>
+
+ <div id="recordScreen" class="screen" hidden>
+  <div class="rec-head">
+   <button id="back" class="iconbtn" title="Back"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+   <span>Weight Record</span>
+   <button id="dele" class="btn">Dele</button>
+   <button id="clea" class="btn">Clea</button>
+   <span id="total">Total: 0</span>
+  </div>
+  <ul id="recordList"></ul>
+ </div>
+
+ <div id="drawer" class="drawer" hidden>
+  <h3>Connection</h3>
+  <label><input id="all" type="checkbox"> Show all BLE devices when connecting (use if the scale is missing from the chooser)</label>
+  <button id="disconnectPrinter" class="btn" disabled>Disconnect printer</button>
+  <h3>Received data</h3>
+  <small>Service FFB0 · commands FFB1 (write without response) · weight notifications FFB2 · frame: 6 display bytes, 1 attribute byte, 1 flag byte.</small>
+  <pre id="raw">No packets received</pre>
+  <details><summary>Connection log</summary><pre id="log"></pre></details>
+  <h3>Help</h3>
+  <small>Open this page over HTTPS (or localhost) in Chrome or Edge with Bluetooth on. CONNECT SCALES only lists devices that advertise the IND 180SS service FFB0. Close any other app that is already connected to the scale.<br>
+  Browsers do not reveal a Bluetooth device's MAC address, so the label shows the device name and a browser-assigned ID instead of an address like 74:48:93:…<br>
+  SAVE stores the current reading in this browser only; RECALL lists saved readings. PRINT sends the indicator's PRINT key and, if a Bluetooth thermal (ESC/POS) printer is connected, prints a weight ticket on it.<br>
+  Add <code>?demo</code> to the address to try the interface without a scale.</small>
+ </div>
+</div>
+<script>
 'use strict';
 const $=id=>document.getElementById(id);
-let device=null, characteristic=null, pending=[], packets=0;
+const SCALE_SERVICE=0xffb0, CMD_CHAR=0xffb1, NOTIFY_CHAR=0xffb2;
+const KEYS={B:0x42,T:0x54,O:0x4f,M:0x4d,H:0x48,P:0x50,W:0x57};
+const KEY_NAMES={B:'BRIGHT',T:'TARE',O:'ZERO',M:'MODE',H:'HOLD',P:'PRINT',W:'POWER'};
+const UNITS=['','kg','lb','oz','g'];
+const FLAG_NAMES=['ZERO','STABLE','TARE','HOLD','LO-BAT','LO','OK','HI'];
+const PRINTER_SERVICES=[0x18f0,0xff00,0xffe0,'e7810a71-73ae-499d-8c15-faa9aef0c3f2','49535343-fe7d-4ae5-8fa9-9fafd205e455'];
+const RECORDS_KEY='ind180ss.records', LAST_DEVICE_KEY='ind180ss.lastDevice';
+const DEMO=new URLSearchParams(location.search).has('demo');
+
+let device=null, cmdChar=null, notifyChar=null, pending=[], packets=0, reading=null;
+let userDisconnect=false, reconnectTimer=null, rememberedDevice=null;
+let printer=null, printerChar=null, demo=null;
+
 function log(message){$('log').textContent=(new Date().toLocaleTimeString()+' '+message+'\n'+$('log').textContent).slice(0,16000);}
-function setConnected(connected){$('disconnect').disabled=!connected;$('connect').disabled=connected;$('all').disabled=connected;}
-function resetReading(){pending=[];packets=0;$('weight').textContent='—';$('flags').textContent='Waiting for a reading';$('updated').textContent='No data received';$('raw').textContent='No packets received';$('print').disabled=true;}
-function disconnected(){if(characteristic)characteristic.removeEventListener('characteristicvaluechanged',receive);characteristic=null;pending=[];setConnected(false);$('status').textContent='Disconnected';$('print').disabled=true;$('flags').textContent='Disconnected — displayed reading may be outdated';log('Disconnected');}
+function warn(message){$('warning').textContent=message||'';}
+const pad=n=>String(n).padStart(2,'0');
+function stamp(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());}
+function shortId(id){return id?id.slice(0,8):'';}
+const isConnected=()=>!!cmdChar||!!demo;
+
+// ---------- Status bar ----------
+function tick(){const d=new Date();$('clock').textContent=stamp(d);}
+tick();setInterval(tick,1000);
+if(navigator.getBattery)navigator.getBattery().then(b=>{
+ const update=()=>{const pct=Math.round(b.level*100);$('batteryPct').textContent=pct+'%';$('batteryFill').setAttribute('width',String(Math.max(1,15*b.level)));};
+ $('battery').hidden=false;update();b.addEventListener('levelchange',update);
+}).catch(()=>{});
+
+// ---------- UI state ----------
+function refreshControls(){
+ const on=isConnected();
+ document.querySelectorAll('.key').forEach(k=>k.disabled=!on);
+ $('power').disabled=!on;
+ $('print').disabled=!on&&!printerChar;
+ $('save').disabled=!reading||reading.value===null;
+ $('connect').textContent=on?'Disconnect':'Connect scales';
+ $('connect').classList.toggle('active',on);
+ $('all').disabled=on;
+ $('btIcon').classList.toggle('on',on||!!printerChar);
+ $('connectPrinter').textContent=printerChar?(printer.name||'Printer'):'Connect printer';
+ $('connectPrinter').classList.toggle('active',!!printerChar);
+ $('disconnectPrinter').disabled=!printerChar;
+ const label=$('deviceLabel');
+ label.classList.remove('reconnect');
+ if(demo)label.textContent='DEMO 180SS (simulated)';
+ else if(device&&cmdChar)label.textContent=(device.name||'Unnamed')+' '+shortId(device.id);
+ else if(rememberedDevice){label.textContent='Reconnect '+(rememberedDevice.name||'scale')+' '+shortId(rememberedDevice.id);label.classList.add('reconnect');}
+ else label.textContent='No scale selected';
+}
+function setFlags(flags){document.querySelectorAll('.ann').forEach(a=>a.classList.toggle('on',flags.includes(a.dataset.flag)));}
+function showReading(r){
+ reading=r;
+ $('weight').textContent=r.text+(r.unit&&r.value!==null?r.unit:'');
+ $('weight').classList.remove('stale');
+ setFlags(r.flags);
+ $('updated').textContent='Updated '+new Date().toLocaleTimeString();
+ refreshControls();
+}
+function markStale(){$('weight').classList.add('stale');$('updated').textContent='Disconnected — reading may be outdated';setFlags([]);}
+
+// ---------- Decoding ----------
 function decodeFrame(bytes){
- const attribute=bytes[6], decimals=attribute&7, unitIndex=(attribute>>3)&7;
- const units=['','kg','lb','oz','g'];
- if(decimals>4||unitIndex>4)throw new Error('Unknown unit or decimal attribute');
- // The supplied example pads the display with NUL; also accept spaces.
- const display=bytes.slice(0,6).map(b=>b===0?' ':String.fromCharCode(b)).join('').trim();
- if(!/^[+-]?\s*\d+$/.test(display))throw new Error('Display is not a numeric weight: '+JSON.stringify(display));
- const value=Number(display.replace(/\s/g,''))/10**decimals;
- const names=['Zero','Stable','Tare','Hold','Low battery','LO','OK','HI'];
- return {value,text:value.toFixed(decimals),unit:units[unitIndex],flags:names.filter((_,i)=>(bytes[7]&(1<<i))!==0)};
+ const attribute=bytes[6], flagByte=bytes[7];
+ let decimals=attribute&7, unitIndex=(attribute>>3)&7;
+ if(decimals>4){log('Unknown decimal setting '+decimals);decimals=0;}
+ if(unitIndex>4){log('Unknown unit setting '+unitIndex);unitIndex=0;}
+ const display=bytes.slice(0,6).map(b=>b===0?' ':String.fromCharCode(b)).join('');
+ const flags=FLAG_NAMES.filter((_,i)=>(flagByte&(1<<i))!==0);
+ const unit=UNITS[unitIndex], trimmed=display.trim();
+ const compact=trimmed.replace(/\s/g,'');
+ let value=null, text=trimmed||'----';
+ if(/^[+-]?\d+$/.test(compact)){value=Number(compact)/10**decimals;text=value.toFixed(decimals);}
+ else if(/^[+-]?\d*\.\d+$/.test(compact)){value=Number(compact);text=compact;}
+ return {value,text,unit,decimals,flags,display};
 }
 function receive(event){
  const v=event.target.value, incoming=Array.from(new Uint8Array(v.buffer,v.byteOffset,v.byteLength));
- packets++;$('raw').textContent='Packet '+packets+' ('+incoming.length+' bytes)\n'+incoming.map(b=>b.toString(16).padStart(2,'0').toUpperCase()).join(' ');
+ handleBytes(incoming);
+}
+function handleBytes(incoming){
+ packets++;
+ $('raw').textContent='Packet '+packets+' ('+incoming.length+' bytes)\n'+incoming.map(b=>b.toString(16).padStart(2,'0').toUpperCase()).join(' ');
+ if(incoming.length===8)pending=[];
  pending.push(...incoming);
  while(pending.length>=8){
-  const frame=pending.splice(0,8);
-  try{const r=decodeFrame(frame);$('weight').textContent=r.text+(r.unit?' '+r.unit:'');$('flags').textContent=r.flags.join(' · ')||'No status flags';$('updated').textContent='Updated '+new Date().toLocaleTimeString();$('print').disabled=false;$('warning').textContent='';}
-  catch(error){$('weight').textContent='—';$('print').disabled=true;$('flags').textContent='Unrecognised display data';$('warning').textContent=error.message+' — inspect the raw packet below.';log(error.message);}
+  const r=decodeFrame(pending.splice(0,8));
+  showReading(r);
+  if(r.value===null)log('Non-numeric display: '+JSON.stringify(r.display));
  }
  if(pending.length)log('Buffered '+pending.length+' bytes awaiting a complete 8-byte frame');
 }
-$('connect').addEventListener('click',async()=>{
- $('warning').textContent='';resetReading();$('connect').disabled=true;
- try{
-  if(!window.isSecureContext)throw new Error('Open this page over HTTPS or localhost.');
-  if(!navigator.bluetooth)throw new Error('Web Bluetooth is unavailable. Use Chrome or Edge on a supported PC and check browser policies.');
-  $('status').textContent='Choose your scale…';
-  const options=$('all').checked?{acceptAllDevices:true,optionalServices:[0xffb0]}:{filters:[{services:[0xffb0]}]};
-  const selected=await navigator.bluetooth.requestDevice(options);
-  if(device)device.removeEventListener('gattserverdisconnected',disconnected);
-  device=selected;device.addEventListener('gattserverdisconnected',disconnected);
-  $('device').textContent=device.name||'Unnamed BLE device';$('status').textContent='Connecting…';log('Selected '+(device.name||device.id));
-  const server=await device.gatt.connect();
-  const service=await server.getPrimaryService(0xffb0);
-  characteristic=await service.getCharacteristic(0xffb2);
-  characteristic.addEventListener('characteristicvaluechanged',receive);
-  await characteristic.startNotifications();
-  setConnected(true);$('status').textContent='Connected · listening for weight';log('Subscribed to FFB2 notifications');
- }catch(error){
+
+// ---------- Scale connection ----------
+async function connectScale(dev){
+ if(device&&device!==dev)device.removeEventListener('gattserverdisconnected',onScaleDisconnected);
+ device=dev;device.removeEventListener('gattserverdisconnected',onScaleDisconnected);device.addEventListener('gattserverdisconnected',onScaleDisconnected);
+ $('deviceLabel').textContent='Connecting '+(dev.name||'scale')+'…';log('Connecting to '+(dev.name||dev.id));
+ const server=await dev.gatt.connect();
+ let service;
+ try{service=await server.getPrimaryService(SCALE_SERVICE);}catch{throw new Error('This device has no FFB0 service, so it is not an IND 180SS scale.');}
+ let c1,c2;
+ try{c1=await service.getCharacteristic(CMD_CHAR);}catch{throw new Error('Scale service found but command characteristic FFB1 is missing.');}
+ try{c2=await service.getCharacteristic(NOTIFY_CHAR);}catch{throw new Error('Scale service found but weight characteristic FFB2 is missing.');}
+ c2.addEventListener('characteristicvaluechanged',receive);
+ await c2.startNotifications();
+ cmdChar=c1;notifyChar=c2;pending=[];packets=0;
+ localStorage.setItem(LAST_DEVICE_KEY,JSON.stringify({id:dev.id,name:dev.name||''}));
+ rememberedDevice=dev;
+ log('Connected; subscribed to FFB2 notifications');warn('');
+ refreshControls();
+}
+function clearScaleChars(){
+ if(notifyChar)notifyChar.removeEventListener('characteristicvaluechanged',receive);
+ notifyChar=null;cmdChar=null;pending=[];
+}
+function onScaleDisconnected(){
+ clearScaleChars();markStale();refreshControls();log('Scale disconnected');
+ if(userDisconnect){userDisconnect=false;return;}
+ warn('Scale connection lost — trying to reconnect…');
+ autoReconnect(1);
+}
+function autoReconnect(attempt){
+ clearTimeout(reconnectTimer);
+ if(attempt>3||!device){warn('Scale connection lost. Click the device label or CONNECT SCALES to reconnect.');return;}
+ reconnectTimer=setTimeout(async()=>{
+  try{await connectScale(device);}
+  catch(e){log('Reconnect attempt '+attempt+' failed: '+e.message);autoReconnect(attempt+1);}
+ },1000*attempt);
+}
+async function requestScale(){
+ if(!window.isSecureContext)throw new Error('Open this page over HTTPS or localhost.');
+ if(!navigator.bluetooth)throw new Error('Web Bluetooth is unavailable. Use Chrome or Edge and check browser policies.');
+ const options=$('all').checked
+  ?{acceptAllDevices:true,optionalServices:[SCALE_SERVICE]}
+  :{filters:[{services:[SCALE_SERVICE]}],optionalServices:[SCALE_SERVICE]};
+ return navigator.bluetooth.requestDevice(options);
+}
+async function startConnect(dev){
+ warn('');$('connect').disabled=true;clearTimeout(reconnectTimer);
+ try{await connectScale(dev||await requestScale());}
+ catch(error){
   log(error.name+': '+error.message);
-  if(device?.gatt?.connected)device.gatt.disconnect();
-  if(characteristic)characteristic.removeEventListener('characteristicvaluechanged',receive);
-  characteristic=null;setConnected(false);$('status').textContent='Not connected';
-  $('warning').textContent=error.name==='NotFoundError'?'No device selected, or the required scale service was not found. If the chooser was empty, try Show all BLE devices.':error.message;
+  userDisconnect=true;
+  if(device?.gatt?.connected)device.gatt.disconnect();else userDisconnect=false;
+  clearScaleChars();
+  warn(error.name==='NotFoundError'?'No scale selected, or none advertising service FFB0 was found. Try "Show all BLE devices" in the link menu.':error.message);
+ }finally{$('connect').disabled=false;refreshControls();}
+}
+$('connect').addEventListener('click',()=>{
+ if(demo){stopDemo();return;}
+ if(cmdChar){userDisconnect=true;clearTimeout(reconnectTimer);device.gatt.disconnect();return;}
+ startConnect();
+});
+$('deviceLabel').addEventListener('click',()=>{if(!isConnected()&&rememberedDevice)startConnect(rememberedDevice);});
+async function loadRememberedDevice(){
+ const saved=JSON.parse(localStorage.getItem(LAST_DEVICE_KEY)||'null');
+ if(!saved||!navigator.bluetooth?.getDevices)return;
+ try{
+  const devices=await navigator.bluetooth.getDevices();
+  rememberedDevice=devices.find(d=>d.id===saved.id)||null;
+  if(rememberedDevice)log('Remembered scale available: '+(rememberedDevice.name||rememberedDevice.id));
+ }catch(e){log('getDevices failed: '+e.message);}
+ refreshControls();
+}
+
+// ---------- Key commands ----------
+async function sendKey(key){
+ const code=KEYS[key];
+ if(demo){demoKey(key);log('Demo key '+KEY_NAMES[key]);return;}
+ if(!cmdChar){warn('Connect the scale first.');return;}
+ const data=new Uint8Array([code]);
+ try{
+  if(cmdChar.writeValueWithoutResponse)await cmdChar.writeValueWithoutResponse(data);
+  else await cmdChar.writeValue(data);
+  log('Sent '+KEY_NAMES[key]+' (0x'+code.toString(16).toUpperCase()+')');
+ }catch(e){log('Send '+KEY_NAMES[key]+' failed: '+e.message);warn('Could not send '+KEY_NAMES[key]+': '+e.message);}
+}
+document.querySelectorAll('.key').forEach(k=>k.addEventListener('click',()=>sendKey(k.dataset.key)));
+$('power').addEventListener('click',()=>{if(confirm('Send the ON/OFF key to the scale?'))sendKey('W');});
+$('print').addEventListener('click',async()=>{
+ if(isConnected())await sendKey('P');
+ if(printerChar){
+  if(reading)await printTicket(reading);
+  else warn('No reading to print on the Bluetooth printer yet.');
  }
 });
-$('disconnect').addEventListener('click',()=>{if(device?.gatt?.connected)device.gatt.disconnect();});
-$('print').addEventListener('click',()=>window.print());
-if(!window.isSecureContext)$('warning').textContent='HTTPS or localhost is required.';
-else if(!navigator.bluetooth)$('warning').textContent='This browser does not expose Web Bluetooth. Open in Chrome or Edge on Windows.';
+
+// ---------- Records ----------
+function loadRecords(){try{return JSON.parse(localStorage.getItem(RECORDS_KEY)||'[]');}catch{return [];}}
+function storeRecords(list){localStorage.setItem(RECORDS_KEY,JSON.stringify(list));}
+function renderRecords(){
+ const list=loadRecords(), ul=$('recordList');
+ ul.replaceChildren();
+ if(!list.length){const li=document.createElement('li');li.className='empty';li.textContent='No saved readings';ul.append(li);}
+ list.forEach((r,i)=>{
+  const li=document.createElement('li'), cb=document.createElement('input'), t=document.createElement('span'), w=document.createElement('span');
+  cb.type='checkbox';cb.dataset.index=String(i);
+  t.textContent=stamp(new Date(r.ts));w.textContent=r.value.toFixed(r.decimals)+r.unit;
+  li.append(cb,t,w);ul.append(li);
+ });
+ const sums=new Map();
+ for(const r of list){const s=sums.get(r.unit)||{sum:0,dec:0};s.sum+=r.value;s.dec=Math.max(s.dec,r.decimals);sums.set(r.unit,s);}
+ $('total').textContent='Total: '+(sums.size?[...sums].map(([u,s])=>s.sum.toFixed(s.dec)+u).join(' + '):'0');
+}
+$('save').addEventListener('click',()=>{
+ if(!reading||reading.value===null){warn('No numeric reading to save.');return;}
+ if(!reading.flags.includes('STABLE')&&!confirm('The reading is not stable. Save it anyway?'))return;
+ const list=loadRecords();
+ list.push({ts:Date.now(),value:reading.value,decimals:reading.decimals,unit:reading.unit});
+ storeRecords(list);
+ warn('Saved '+reading.text+reading.unit+' ('+list.length+' records)');
+ log('Saved record '+reading.text+reading.unit);
+});
+function showRecords(show){$('mainScreen').hidden=show;$('recordScreen').hidden=!show;if(show)renderRecords();}
+$('recall').addEventListener('click',()=>showRecords(true));
+$('back').addEventListener('click',()=>showRecords(false));
+$('dele').addEventListener('click',()=>{
+ const checked=new Set([...document.querySelectorAll('#recordList input:checked')].map(c=>Number(c.dataset.index)));
+ if(!checked.size){alert('Tick the records to delete first.');return;}
+ if(!confirm('Delete '+checked.size+' selected record(s)?'))return;
+ storeRecords(loadRecords().filter((_,i)=>!checked.has(i)));renderRecords();
+});
+$('clea').addEventListener('click',()=>{
+ if(!loadRecords().length)return;
+ if(confirm('Clear all saved records?')){storeRecords([]);renderRecords();}
+});
+
+// ---------- BLE ESC/POS printer ----------
+async function connectPrinter(){
+ warn('');
+ if(!navigator.bluetooth){warn('Web Bluetooth is unavailable in this browser.');return;}
+ try{
+  const dev=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalServices:PRINTER_SERVICES});
+  log('Connecting printer '+(dev.name||dev.id));
+  const server=await dev.gatt.connect();
+  const services=await server.getPrimaryServices();
+  let found=null;
+  for(const s of services){
+   for(const c of await s.getCharacteristics()){
+    if(c.properties.write||c.properties.writeWithoutResponse){found=c;break;}
+   }
+   if(found)break;
+  }
+  if(!found){dev.gatt.disconnect();throw new Error('No writable printer characteristic found. This printer may use an unsupported Bluetooth profile.');}
+  printer=dev;printerChar=found;
+  dev.addEventListener('gattserverdisconnected',onPrinterDisconnected);
+  log('Printer ready on '+found.service.uuid+' / '+found.uuid);
+ }catch(e){log('Printer: '+e.name+': '+e.message);if(e.name!=='NotFoundError')warn(e.message);}
+ refreshControls();
+}
+function onPrinterDisconnected(){log('Printer disconnected');printer=null;printerChar=null;refreshControls();}
+$('connectPrinter').addEventListener('click',()=>{if(!printerChar)connectPrinter();});
+$('disconnectPrinter').addEventListener('click',()=>{if(printer?.gatt?.connected)printer.gatt.disconnect();});
+function buildTicket(r){
+ const enc=new TextEncoder(), out=[];
+ const add=(...parts)=>{for(const p of parts)out.push(...(typeof p==='string'?enc.encode(p.replace(/[^\x20-\x7e\n]/g,'?')):p));};
+ const ESC=0x1b, GS=0x1d;
+ add([ESC,0x40],[ESC,0x61,1],[ESC,0x45,1],'WEIGHT TICKET\n',[ESC,0x45,0]);
+ add(stamp(new Date())+'\n');
+ if(device?.name)add('Scale: '+device.name+'\n');
+ add('--------------------------------\n');
+ add([GS,0x21,0x11],r.text+(r.value!==null?' '+r.unit:'')+'\n',[GS,0x21,0]);
+ add((r.flags.join(' ')||'No status flags')+'\n');
+ add('--------------------------------\n');
+ add([ESC,0x64,4],[GS,0x56,0x42,0]);
+ return new Uint8Array(out);
+}
+async function printTicket(r){
+ const data=buildTicket(r), noResp=printerChar.properties.writeWithoutResponse;
+ try{
+  for(let i=0;i<data.length;i+=100){
+   const chunk=data.slice(i,i+100);
+   if(noResp&&printerChar.writeValueWithoutResponse)await printerChar.writeValueWithoutResponse(chunk);
+   else if(printerChar.writeValueWithResponse)await printerChar.writeValueWithResponse(chunk);
+   else await printerChar.writeValue(chunk);
+   await new Promise(res=>setTimeout(res,30));
+  }
+  log('Printed ticket ('+data.length+' bytes)');
+ }catch(e){log('Print failed: '+e.message);warn('Printer error: '+e.message);}
+}
+
+// ---------- Drawer ----------
+$('drawerToggle').addEventListener('click',()=>{const d=$('drawer');d.hidden=!d.hidden;$('drawerToggle').setAttribute('aria-expanded',String(!d.hidden));});
+
+// ---------- Demo mode ----------
+function demoFrame(){
+ const display=demo.hold?demo.held:Math.max(0,demo.gross-demo.tareAt);
+ const digits=String(Math.min(999999,Math.round(display))).padStart(3,'0');
+ const bytes=new Array(6).fill(0);
+ for(let i=0;i<digits.length;i++)bytes[6-digits.length+i]=digits.charCodeAt(i);
+ const attribute=(demo.unit<<3)|2;
+ let flags=0;
+ if(display===0)flags|=1;
+ if(demo.stable)flags|=2;
+ if(demo.tareAt)flags|=4;
+ if(demo.hold)flags|=8;
+ flags|=display>2000?0x80:display>500?0x40:0x20;
+ return [...bytes,attribute,flags];
+}
+function demoKey(key){
+ switch(key){
+  case 'T':demo.tareAt=demo.tareAt?0:demo.gross;break;
+  case 'O':demo.gross=0;demo.tareAt=0;break;
+  case 'H':demo.hold=!demo.hold;demo.held=Math.max(0,demo.gross-demo.tareAt);break;
+  case 'M':demo.unit=demo.unit%4+1;break;
+  case 'B':demo.bright=(demo.bright+1)%3;$('lcd').style.filter='brightness('+[1,1.25,.8][demo.bright]+')';break;
+  case 'P':log('Demo: indicator PRINT key');break;
+  case 'W':stopDemo();break;
+  default:{const never=key;throw new Error('Unhandled key '+never);}
+ }
+}
+function startDemo(){
+ const docFrame=[0x00,0x00,0x31,0x30,0x30,0x30,0x0a,0x02];
+ const test=decodeFrame(docFrame);
+ const pass=test.text==='10.00'&&test.unit==='kg'&&test.flags.join()==='STABLE';
+ log('Self-test with doc frame 00 00 31 30 30 30 0A 02 → '+test.text+test.unit+' ['+test.flags.join(',')+'] '+(pass?'PASS':'FAIL'));
+ demo={gross:1000,tareAt:0,hold:false,held:0,unit:1,stable:true,bright:0,ticks:0,timer:null};
+ handleBytes(docFrame);
+ demo.timer=setInterval(()=>{
+  demo.ticks++;
+  if(demo.ticks%12===0){demo.gross=Math.round(500+Math.random()*2000);demo.stable=false;}
+  else if(demo.ticks%12===3)demo.stable=true;
+  else if(!demo.stable)demo.gross+=Math.round((Math.random()-.5)*20);
+  handleBytes(demoFrame());
+ },500);
+ refreshControls();
+}
+function stopDemo(){clearInterval(demo.timer);demo=null;$('lcd').style.filter='';markStale();refreshControls();log('Demo stopped');}
+
+// ---------- Init ----------
+if(DEMO)startDemo();
+else if(!window.isSecureContext)warn('HTTPS or localhost is required for Bluetooth.');
+else if(!navigator.bluetooth)warn('This browser does not expose Web Bluetooth. Open in Chrome or Edge.');
+else loadRememberedDevice();
+refreshControls();
 </script></body></html>
