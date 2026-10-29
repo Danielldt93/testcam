@@ -27,7 +27,7 @@ button{font:inherit;cursor:pointer}
 .annTop{display:flex;justify-content:space-between;padding:0 6px 0 40px}
 .annTop span span{margin-right:12px}.annTop .right span{margin:0 0 0 14px}
 .annLeft{position:absolute;left:22px;top:52px;display:flex;flex-direction:column;gap:18px;font-size:14px}
-#weight{text-align:right;font-weight:300;font-size:clamp(56px,12vw,112px);line-height:1.1;font-variant-numeric:tabular-nums;margin-top:12px;white-space:nowrap;overflow:hidden}
+#weight{text-align:right;font-weight:300;font-size:clamp(56px,12vw,112px);line-height:1.25;font-variant-numeric:tabular-nums;margin-top:12px;white-space:nowrap;overflow:hidden}
 #weight.stale{opacity:.45}
 #updated{text-align:right;font-size:11px;color:#ffffff70;min-height:14px}
 .keys{display:flex;align-items:center;gap:6px;margin-top:16px}
@@ -100,6 +100,7 @@ button{font:inherit;cursor:pointer}
  <div id="drawer" class="drawer" hidden>
   <h3>Connection</h3>
   <label><input id="all" type="checkbox"> Show all BLE devices when connecting (use if the scale is missing from the chooser)</label>
+  <button id="forgetScale" class="btn" disabled>Forget scale</button>
   <button id="disconnectPrinter" class="btn" disabled>Disconnect printer</button>
   <h3>Received data</h3>
   <small>Service FFB0 · commands FFB1 (write without response) · weight notifications FFB2 · frame: 6 display bytes, 1 attribute byte, 1 flag byte.</small>
@@ -128,8 +129,8 @@ let device=null, cmdChar=null, notifyChar=null, pending=[], packets=0, reading=n
 let userDisconnect=false, reconnectTimer=null, rememberedDevice=null;
 let printer=null, printerChar=null, demo=null;
 
-function log(message){$('log').textContent=(new Date().toLocaleTimeString()+' '+message+'\n'+$('log').textContent).slice(0,16000);}
-function warn(message){$('warning').textContent=message||'';}
+function log(message){console.log('[180SS]',message);$('log').textContent=(new Date().toLocaleTimeString()+' '+message+'\n'+$('log').textContent).slice(0,16000);}
+function warn(message){if(message)console.warn('[180SS]',message);$('warning').textContent=message||'';}
 const pad=n=>String(n).padStart(2,'0');
 function stamp(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())+':'+pad(d.getSeconds());}
 function shortId(id){return id?id.slice(0,8):'';}
@@ -157,6 +158,7 @@ function refreshControls(){
  $('connectPrinter').textContent=printerChar?(printer.name||'Printer'):'Connect printer';
  $('connectPrinter').classList.toggle('active',!!printerChar);
  $('disconnectPrinter').disabled=!printerChar;
+ $('forgetScale').disabled=!!demo||(!device&&!rememberedDevice);
  const label=$('deviceLabel');
  label.classList.remove('reconnect');
  if(demo)label.textContent='DEMO 180SS (simulated)';
@@ -166,6 +168,7 @@ function refreshControls(){
 }
 function setFlags(flags){document.querySelectorAll('.ann').forEach(a=>a.classList.toggle('on',flags.includes(a.dataset.flag)));}
 function showReading(r){
+ console.log('[180SS] reading',r);
  reading=r;
  $('weight').textContent=r.text+(r.unit&&r.value!==null?r.unit:'');
  $('weight').classList.remove('stale');
@@ -194,56 +197,162 @@ function receive(event){
  const v=event.target.value, incoming=Array.from(new Uint8Array(v.buffer,v.byteOffset,v.byteLength));
  handleBytes(incoming);
 }
+// The 180SS protocol sends 8-byte binary frames, but some BLE serial modules
+// (e.g. "BleSerialPort") forward the indicator's ASCII print/continuous output instead.
+function isBinaryFrame(bytes){
+ const displayOk=bytes.slice(0,6).every(b=>b===0||b===0x20||b===0x2d||b===0x2e||(b>=0x30&&b<=0x39)||(b>=0x41&&b<=0x7a));
+ const a=bytes[6];
+ return displayOk&&(a&0xc0)===0&&((a>>3)&7)<=4&&(a&7)<=4;
+}
+function looksLikeText(bytes){
+ if(bytes.some(b=>b===0x0d||b===0x0a))return true;
+ const s=String.fromCharCode(...bytes);
+ return /kg|lb|oz|\d\.\d|[,:=]/i.test(s);
+}
+function parseTextLine(line){
+ const clean=line.replace(/[^\x20-\x7e]/g,'').trim();
+ const m=clean.match(/([+-]?)\s*(\d+(?:\.\d+)?)\s*(kg|lb|oz|g)?/i);
+ if(!m)return {value:null,text:clean||'----',unit:'',decimals:0,flags:[],display:clean};
+ const numText=m[2], decimals=numText.includes('.')?numText.split('.')[1].length:0;
+ const value=(m[1]==='-'?-1:1)*Number(numText);
+ const unit=(m[3]||reading?.unit||'').toLowerCase();
+ const flags=[];
+ if(!/^U|\bUS\b|unstable|motion/i.test(clean))flags.push('STABLE');
+ if(/\bNT\b|\bNET\b|\bN\b/i.test(clean))flags.push('TARE');
+ if(/\bOL\b|over/i.test(clean))flags.push('HI');
+ if(value===0)flags.push('ZERO');
+ return {value,text:value.toFixed(decimals),unit,decimals,flags,display:clean};
+}
+let streamMode='auto', textBuffer='', rawHistory=[];
+function resetStream(){streamMode='auto';textBuffer='';pending=[];}
+function showRaw(incoming){
+ const hex=incoming.map(b=>b.toString(16).padStart(2,'0').toUpperCase()).join(' ');
+ const ascii=incoming.map(b=>b>=0x20&&b<0x7f?String.fromCharCode(b):b===0x0d?'\\r':b===0x0a?'\\n':'·').join('');
+ console.log('[180SS] packet #'+packets,{mode:streamMode,length:incoming.length,hex,ascii,bytes:incoming});
+ rawHistory.unshift('#'+packets+' ('+incoming.length+' B) '+hex+'   |'+ascii+'|');
+ rawHistory=rawHistory.slice(0,15);
+ $('raw').textContent='Mode: '+streamMode+'\n'+rawHistory.join('\n');
+}
+function handleText(incoming){
+ textBuffer+=String.fromCharCode(...incoming);
+ // Frames may be CR/LF terminated or wrapped as SOH STX <data> ETX EOT NUL.
+ const lines=textBuffer.split(/[\r\n\x00-\x04]+/);
+ textBuffer=lines.pop().slice(-200);
+ for(const line of lines){
+  if(!line.trim())continue;
+  console.log('[180SS] text line',JSON.stringify(line));
+  const r=parseTextLine(line);
+  showReading(r);
+  if(r.value===null)log('Unparsed text line: '+JSON.stringify(line));
+ }
+}
 function handleBytes(incoming){
  packets++;
- $('raw').textContent='Packet '+packets+' ('+incoming.length+' bytes)\n'+incoming.map(b=>b.toString(16).padStart(2,'0').toUpperCase()).join(' ');
+ showRaw(incoming);
+ if(streamMode==='auto'){
+  if(incoming.length===8&&isBinaryFrame(incoming)){streamMode='binary';pending=[];log('Scale is sending 180SS binary frames');}
+  else{
+   pending.push(...incoming);
+   if(looksLikeText(pending)){
+    streamMode='text';log('Scale is sending ASCII text lines; switched to text decoding');
+    const carry=pending;pending=[];handleText(carry);
+   }else if(pending.length>64)pending=pending.slice(-32);
+   return;
+  }
+ }
+ if(streamMode==='text'){handleText(incoming);return;}
  if(incoming.length===8)pending=[];
  pending.push(...incoming);
  while(pending.length>=8){
+  if(!isBinaryFrame(pending.slice(0,8))){pending.shift();continue;}
   const r=decodeFrame(pending.splice(0,8));
   showReading(r);
   if(r.value===null)log('Non-numeric display: '+JSON.stringify(r.display));
  }
- if(pending.length)log('Buffered '+pending.length+' bytes awaiting a complete 8-byte frame');
 }
 
 // ---------- Scale connection ----------
+const sleep=ms=>new Promise(res=>setTimeout(res,ms));
+let connecting=false;
+function dropGatt(dev){if(dev?.gatt?.connected){userDisconnect=true;dev.gatt.disconnect();}}
+// Windows often reports a stale GATT session as connected but with no services,
+// so close any old session first and retry discovery a few times.
+async function openScaleService(dev){
+ if(dev.gatt.connected){log('Closing stale GATT session before reconnecting');dropGatt(dev);await sleep(700);}
+ for(let attempt=1;;attempt++){
+  try{
+   const server=await dev.gatt.connect();
+   await sleep(300);
+   return await server.getPrimaryService(SCALE_SERVICE);
+  }catch(e){
+   log('FFB0 discovery attempt '+attempt+' failed: '+e.name+': '+e.message);
+   dropGatt(dev);
+   if(attempt>=3)throw new Error('Could not open the scale service (FFB0). The Bluetooth module may still be held by another app or an old session. Use "Forget scale" in the link menu, power-cycle the scale, then connect again.');
+   await sleep(800*attempt);
+  }
+ }
+}
 async function connectScale(dev){
- if(device&&device!==dev)device.removeEventListener('gattserverdisconnected',onScaleDisconnected);
- device=dev;device.removeEventListener('gattserverdisconnected',onScaleDisconnected);device.addEventListener('gattserverdisconnected',onScaleDisconnected);
- $('deviceLabel').textContent='Connecting '+(dev.name||'scale')+'…';log('Connecting to '+(dev.name||dev.id));
- const server=await dev.gatt.connect();
- let service;
- try{service=await server.getPrimaryService(SCALE_SERVICE);}catch{throw new Error('This device has no FFB0 service, so it is not an IND 180SS scale.');}
- let c1,c2;
- try{c1=await service.getCharacteristic(CMD_CHAR);}catch{throw new Error('Scale service found but command characteristic FFB1 is missing.');}
- try{c2=await service.getCharacteristic(NOTIFY_CHAR);}catch{throw new Error('Scale service found but weight characteristic FFB2 is missing.');}
- c2.addEventListener('characteristicvaluechanged',receive);
- await c2.startNotifications();
- cmdChar=c1;notifyChar=c2;pending=[];packets=0;
- localStorage.setItem(LAST_DEVICE_KEY,JSON.stringify({id:dev.id,name:dev.name||''}));
- rememberedDevice=dev;
- log('Connected; subscribed to FFB2 notifications');warn('');
- refreshControls();
+ if(connecting)throw new Error('A connection attempt is already in progress.');
+ connecting=true;
+ try{
+  if(device&&device!==dev){device.removeEventListener('gattserverdisconnected',onScaleDisconnected);dropGatt(device);}
+  device=dev;device.removeEventListener('gattserverdisconnected',onScaleDisconnected);device.addEventListener('gattserverdisconnected',onScaleDisconnected);
+  $('deviceLabel').textContent='Connecting '+(dev.name||'scale')+'…';log('Connecting to '+(dev.name||dev.id));
+  const service=await openScaleService(dev);
+  let c1,c2;
+  try{c1=await service.getCharacteristic(CMD_CHAR);}catch{throw new Error('Scale service found but command characteristic FFB1 is missing.');}
+  try{c2=await service.getCharacteristic(NOTIFY_CHAR);}catch{throw new Error('Scale service found but weight characteristic FFB2 is missing.');}
+  c2.addEventListener('characteristicvaluechanged',receive);
+  await c2.startNotifications();
+  cmdChar=c1;notifyChar=c2;resetStream();packets=0;rawHistory=[];
+  localStorage.setItem(LAST_DEVICE_KEY,JSON.stringify({id:dev.id,name:dev.name||''}));
+  rememberedDevice=dev;
+  log('Connected; subscribed to FFB2 notifications');warn('');
+ }finally{connecting=false;refreshControls();}
 }
 function clearScaleChars(){
  if(notifyChar)notifyChar.removeEventListener('characteristicvaluechanged',receive);
  notifyChar=null;cmdChar=null;pending=[];
 }
+async function disconnectScale(){
+ clearTimeout(reconnectTimer);
+ const nc=notifyChar;
+ clearScaleChars();
+ if(nc&&device?.gatt?.connected){try{await nc.stopNotifications();}catch(e){log('stopNotifications: '+e.message);}}
+ dropGatt(device);
+ markStale();refreshControls();
+}
+async function forgetScale(){
+ if(connecting){warn('Wait for the current connection attempt to finish.');return;}
+ await disconnectScale();
+ const target=device||rememberedDevice;
+ if(target){
+  target.removeEventListener('gattserverdisconnected',onScaleDisconnected);
+  if(target.forget){try{await target.forget();log('Browser permission for '+(target.name||target.id)+' removed');}catch(e){log('forget() failed: '+e.message);}}
+ }
+ localStorage.removeItem(LAST_DEVICE_KEY);
+ device=null;rememberedDevice=null;userDisconnect=false;
+ refreshControls();
+ warn('Scale forgotten. If it is also paired in Windows Settings > Bluetooth & devices, remove it there, power-cycle the scale, then click CONNECT SCALES.');
+}
 function onScaleDisconnected(){
- clearScaleChars();markStale();refreshControls();log('Scale disconnected');
- if(userDisconnect){userDisconnect=false;return;}
+ const manual=userDisconnect;userDisconnect=false;
+ clearScaleChars();markStale();refreshControls();log('Scale disconnected'+(manual?' (requested)':''));
+ if(manual||connecting)return;
  warn('Scale connection lost — trying to reconnect…');
  autoReconnect(1);
 }
 function autoReconnect(attempt){
  clearTimeout(reconnectTimer);
- if(attempt>3||!device){warn('Scale connection lost. Click the device label or CONNECT SCALES to reconnect.');return;}
+ if(attempt>3||!device){warn('Scale connection lost. Click the device label or CONNECT SCALES to reconnect.');refreshControls();return;}
  reconnectTimer=setTimeout(async()=>{
+  if(connecting||cmdChar)return;
   try{await connectScale(device);}
   catch(e){log('Reconnect attempt '+attempt+' failed: '+e.message);autoReconnect(attempt+1);}
  },1000*attempt);
 }
+window.addEventListener('pagehide',()=>{dropGatt(device);dropGatt(printer);});
 async function requestScale(){
  if(!window.isSecureContext)throw new Error('Open this page over HTTPS or localhost.');
  if(!navigator.bluetooth)throw new Error('Web Bluetooth is unavailable. Use Chrome or Edge and check browser policies.');
@@ -253,21 +362,21 @@ async function requestScale(){
  return navigator.bluetooth.requestDevice(options);
 }
 async function startConnect(dev){
+ if(connecting)return;
  warn('');$('connect').disabled=true;clearTimeout(reconnectTimer);
  try{await connectScale(dev||await requestScale());}
  catch(error){
   log(error.name+': '+error.message);
-  userDisconnect=true;
-  if(device?.gatt?.connected)device.gatt.disconnect();else userDisconnect=false;
-  clearScaleChars();
+  await disconnectScale();
   warn(error.name==='NotFoundError'?'No scale selected, or none advertising service FFB0 was found. Try "Show all BLE devices" in the link menu.':error.message);
  }finally{$('connect').disabled=false;refreshControls();}
 }
 $('connect').addEventListener('click',()=>{
  if(demo){stopDemo();return;}
- if(cmdChar){userDisconnect=true;clearTimeout(reconnectTimer);device.gatt.disconnect();return;}
+ if(cmdChar){disconnectScale();return;}
  startConnect();
 });
+$('forgetScale').addEventListener('click',forgetScale);
 $('deviceLabel').addEventListener('click',()=>{if(!isConnected()&&rememberedDevice)startConnect(rememberedDevice);});
 async function loadRememberedDevice(){
  const saved=JSON.parse(localStorage.getItem(LAST_DEVICE_KEY)||'null');
